@@ -1,0 +1,17 @@
+const db=require('../db/pool');
+const {check,date,today}=require('./common');
+const {scope}=require('./rbac');
+async function report(user,query){
+  check(user.role!=='student','Ruxsat yo‘q',403);
+  const to=query.to?date(query.to):today();const from=query.from?date(query.from):new Date(Date.parse(to)-29*86400000).toISOString().slice(0,10);
+  check(from<=to&&(Date.parse(to)-Date.parse(from))/86400000<=366,'Davr 1 yildan oshmasin');
+  const s=await scope(user);
+  const rows=(await db.query(`SELECT n.*,q.bolim_id,q.xodim_id,b.nomi AS bolim,x.familiya||' '||x.ism AS xodim,m.nomi AS murojaat,EXTRACT(ISODOW FROM n.sana)::int AS day,EXTRACT(HOUR FROM COALESCE(n.boshlanish,q.start_time))::int AS hour FROM navbatlar n JOIN qabul_vaqti q ON q.id=n.qabul_vaqti_id JOIN bolimlar b ON b.id=q.bolim_id JOIN users x ON x.id=q.xodim_id LEFT JOIN murojaat_turlari m ON m.id=n.murojaat_turi_id LEFT JOIN student_info si ON si.user_id=n.student_id WHERE n.sana BETWEEN $1 AND $2 AND ($3='admin' OR q.xodim_id=$4 OR ($3='dekanat' AND q.bolim_id=ANY($5::bigint[])) OR ($3='tyutor' AND EXISTS(SELECT 1 FROM tyutor_guruh t WHERE t.tyutor_id=$4 AND t.guruh=si.guruh)))`,[from,to,user.role,user.id,s])).rows;
+  const capacity=(await db.query(`SELECT q.bolim_id,q.xodim_id,SUM(CASE WHEN q.slot_min IS NULL THEN q.max_navbat ELSE LEAST(q.max_navbat,FLOOR(EXTRACT(EPOCH FROM q.end_time-q.start_time)/60/q.slot_min)) END)::int AS n FROM qabul_vaqti q JOIN users u ON u.id=q.xodim_id AND u.status JOIN bolimlar b ON b.id=q.bolim_id AND b.status CROSS JOIN generate_series($1::date,$2::date,interval '1 day') d WHERE q.status AND q.hafta_kuni=EXTRACT(ISODOW FROM d) AND NOT EXISTS(SELECT 1 FROM qabul_istisno i WHERE i.xodim_id=q.xodim_id AND i.sana=d::date) AND NOT EXISTS(SELECT 1 FROM bayramlar h WHERE h.sana=d::date) AND ($3='admin' OR q.xodim_id=$4 OR ($3='dekanat' AND q.bolim_id=ANY($5::bigint[]))) GROUP BY q.bolim_id,q.xodim_id`,[from,to,user.role,user.id,s])).rows;
+  const staff=new Map(),types=new Map(),heat=new Map();
+  for(const r of rows){const key=`${r.bolim_id}:${r.xodim_id}`;if(!staff.has(key))staff.set(key,{bolim:r.bolim,xodim:r.xodim,total:0,completed:0,missed:0,capacity:capacity.find(v=>v.bolim_id===r.bolim_id&&v.xodim_id===r.xodim_id)?.n||0});const st=staff.get(key);st.total++;if(r.status==='qabul_qilindi')st.completed++;if(r.status==='kelmadi')st.missed++;const t=r.murojaat||'Boshqa';types.set(t,(types.get(t)||0)+1);const hk=`${r.day}:${r.hour}`;if(!heat.has(hk))heat.set(hk,{day:r.day,hour:r.hour,total:0});heat.get(hk).total++;}
+  const completed=rows.filter(r=>r.status==='qabul_qilindi').length;const missed=rows.filter(r=>r.status==='kelmadi').length;
+  const avg=(await db.query(`SELECT AVG(EXTRACT(EPOCH FROM a.created_at-n.created_at)/60) AS minutes FROM audit_log a JOIN navbatlar n ON n.id=a.obyekt_id WHERE a.amal='navbat.status' AND a.yangi->>'status'='tasdiqlandi' AND n.id=ANY($1::bigint[])`,[rows.map(n=>n.id)])).rows[0]?.minutes;
+  return {from,to,total:rows.length,completed,noShow:rows.length?Math.round(missed/rows.length*100):0,active:rows.filter(r=>['kutilmoqda','tasdiqlandi'].includes(r.status)).length,averageConfirmationMinutes:avg?Math.round(Number(avg)):null,staff:[...staff.values()],types:[...types].map(([nomi,total])=>({nomi,total})).sort((a,b)=>b.total-a.total).slice(0,10),heat:[...heat.values()].sort((a,b)=>a.day-b.day||a.hour-b.hour)};
+}
+module.exports={report};

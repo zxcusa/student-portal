@@ -1,0 +1,13 @@
+CREATE TABLE IF NOT EXISTS sessions (sid text PRIMARY KEY, sess jsonb NOT NULL, expire timestamptz NOT NULL);
+CREATE INDEX IF NOT EXISTS ix_sessions_expire ON sessions(expire);
+CREATE TABLE IF NOT EXISTS login_attempts (kalit text PRIMARY KEY, soni integer NOT NULL, expires_at timestamptz NOT NULL);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS session_version integer NOT NULL DEFAULT 0;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS parol_almashtirish boolean NOT NULL DEFAULT false;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS telegram_id bigint UNIQUE;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS eslatma_kun boolean NOT NULL DEFAULT true;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS eslatma_soat boolean NOT NULL DEFAULT true;
+ALTER TABLE murojaat_turlari ADD COLUMN IF NOT EXISTS status boolean NOT NULL DEFAULT true;
+ALTER TABLE murojaat_turlari ADD COLUMN IF NOT EXISTS tavsif text;
+CREATE TABLE IF NOT EXISTS guruhlar(nomi varchar(30) PRIMARY KEY, fakultet_id bigint NOT NULL REFERENCES bolimlar(id) ON DELETE RESTRICT);
+ALTER TABLE bildirishnomalar ADD COLUMN IF NOT EXISTS reminder_key text UNIQUE;
+INSERT INTO sozlamalar(kalit,qiymat) VALUES ('jazo_yoqilgan','false') ON CONFLICT DO NOTHING;
