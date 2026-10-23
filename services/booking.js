@@ -11,8 +11,9 @@ async function available(bolimId,sana,c=db){
   date(sana);
   const {rows}=await c.query(`SELECT q.*,u.ism,u.familiya,b.nomi AS bolim,b.xona FROM qabul_vaqti q JOIN users u ON u.id=q.xodim_id AND u.status JOIN bolimlar b ON b.id=q.bolim_id AND b.status WHERE q.bolim_id=$1 AND q.status AND q.hafta_kuni=EXTRACT(ISODOW FROM $2::date) AND NOT EXISTS(SELECT 1 FROM qabul_istisno i WHERE i.xodim_id=q.xodim_id AND i.sana=$2) AND NOT EXISTS(SELECT 1 FROM bayramlar WHERE sana=$2) ORDER BY q.start_time,u.familiya`,[id(bolimId),sana]);
   const config=await settings(c);
-  const occupied=(await c.query('SELECT qabul_vaqti_id,navbat_raqami FROM navbatlar WHERE sana=$1 AND status=ANY($2)',[sana,OCCUPIED])).rows;
-  return rows.map(q=>({...q,slots:Array.from({length:capacity(q)},(_,i)=>{const n=i+1,s=slot(q,n);return {navbat_raqami:n,...s,band:occupied.some(r=>r.qabul_vaqti_id===q.id&&r.navbat_raqami===n),yopiq:instant(sana,s.boshlanish||q.start_time)-Date.now()<config.bugun_yopilish_daq*60000};})}));
+  const occupied=(await c.query('SELECT qabul_vaqti_id,navbat_raqami FROM navbatlar WHERE sana=$1 AND status=ANY($2) AND qabul_vaqti_id=ANY($3::bigint[])',[sana,OCCUPIED,rows.map(q=>q.id)])).rows;
+  const occupiedSlots=new Set(occupied.map(r=>`${r.qabul_vaqti_id}:${r.navbat_raqami}`));
+  return rows.map(q=>({...q,slots:Array.from({length:capacity(q)},(_,i)=>{const n=i+1,s=slot(q,n);return {navbat_raqami:n,...s,band:occupiedSlots.has(`${q.id}:${n}`),yopiq:instant(sana,s.boshlanish||q.start_time)-Date.now()<config.bugun_yopilish_daq*60000};})}));
 }
 async function book(user,body){
   check(user.role==='student','Faqat talaba o‘z nomidan navbat oladi',403);
